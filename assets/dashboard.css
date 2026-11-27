@@ -1,0 +1,89 @@
+/* Main layout & dark Vice City gradient accents */
+.stMain .block-container,
+[data-testid="stMainBlockContainer"] {
+    padding-top: 3.75rem;
+    padding-bottom: 2rem;
+}
+
+/* Hero Banner */
+.vice-hero {
+    background: linear-gradient(135deg, #140826 0%, #3b0d54 48%, #c92a76 85%, #ff7b54 100%);
+    border: 1px solid rgba(255, 110, 199, 0.45);
+    border-radius: 16px;
+    padding: clamp(16px, 2vw, 24px) clamp(16px, 2.5vw, 30px);
+    box-shadow: 0 10px 30px rgba(201, 42, 118, 0.22);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: clamp(12px, 2vw, 24px);
+}
+.vice-hero-text {
+    flex: 1;
+    min-width: 0;
+}
+.vice-hero-logo {
+    display: block;
+    flex-shrink: 0;
+    width: clamp(68px, 10vw, 135px);
+    height: auto;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.5));
+}
+.vice-hero-text h1 {
+    color: #ffffff;
+    font-size: clamp(1.35rem, 2.3vw, 2.05rem);
+    font-weight: 800;
+    line-height: 1.2;
+    padding: 0;
+    margin: 0 0 6px 0;
+    letter-spacing: -0.5px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+.vice-hero-text p {
+    color: #f3d9fa;
+    font-size: 1.02rem;
+    margin: 0;
+    max-width: 720px;
+    line-height: 1.5;
+}
+.vice-badge {
+    display: inline-block;
+    background: rgba(0, 212, 255, 0.18);
+    border: 1px solid #00d4ff;
+    color: #7ce8ff;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+/* Glassmorphic Metric Cards */
+div[data-testid="stMetric"] {
+    background: linear-gradient(180deg, rgba(38, 16, 66, 0.65) 0%, rgba(20, 10, 38, 0.85) 100%);
+    border: 1px solid rgba(255, 110, 199, 0.35);
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s ease, border-color 0.15s ease;
+}
+div[data-testid="stMetric"]:hover {
+    border-color: #00d4ff;
+    transform: translateY(-2px);
+}
+div[data-testid="stMetricLabel"] {
+    color: #e0aaff !important;
+    font-weight: 600;
+}
+div[data-testid="stMetricValue"] {
+    color: #ffffff !important;
+    font-weight: 800;
+    font-size: clamp(1.25rem, 2.3vw, 2rem);
+}
+
+/* Styled Tabs */
+button[data-baseweb="tab"] {
+    font-size: 0.98rem !important;
+    font-weight: 600 !important;
+}
