@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # Freely available public-domain / open-license GTA VI graphics on Wikimedia Commons
-GTA_VI_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Grand_Theft_Auto_VI_logo_%28with_gradient%29.svg/640px-Grand_Theft_Auto_VI_logo_%28with_gradient%29.svg.png"
+GTA_VI_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/d/d6/Grand_Theft_Auto_VI_logo_%28with_gradient%29.svg"
 LEONIDA_FLAG_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/State_of_Leonida_flag.png/640px-State_of_Leonida_flag.png"
 
 st.markdown(
