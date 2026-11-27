@@ -1,111 +1,47 @@
-import streamlit as st
+import re
+from collections import Counter
+from io import BytesIO
+from pathlib import Path
+from zipfile import BadZipFile, ZipFile
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import requests
+import streamlit as st
 
-# ---------------------------------------------------------
-# 1. PAGE CONFIG & VICE CITY NEON THEME
-# ---------------------------------------------------------
+
 st.set_page_config(
-    page_title="GTA VI Launch & Viewership Analytics",
-    page_icon="🌴",
+    page_title="GTA VI Launch Analytics",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Freely available public-domain / open-license GTA VI graphics on Wikimedia Commons
+ASSETS = Path(__file__).resolve().parent / "assets"
 GTA_VI_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/d/d6/Grand_Theft_Auto_VI_logo_%28with_gradient%29.svg"
-LEONIDA_FLAG_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/State_of_Leonida_flag.png/640px-State_of_Leonida_flag.png"
+TAKE_TWO = "https://ir.take2games.com/node/32701"
+SENSOR_TOWER = "https://sensortower.com/grand-theft-auto-VI/sales-tracker"
+WEEKEND = "https://alineaanalytics.substack.com/p/gta-6-sells-449m-copies-makes-40b"
+WEEK_ONE = "https://alineaanalytics.substack.com/p/grand-theft-auto-6-a-week-in"
+STREAMS = "https://streamscharts.com/news/gta6-livestreaming-week-after-launch"
+KAGGLE = "https://www.kaggle.com/datasets/ektarr/gta-vi-user-reviews"
+COLORS = ["#ff2a85", "#00d4ff", "#ff9e5e", "#9b5de5", "#00f5d4"]
+SCALE = ["#2b0947", "#9d176c", "#ff2a85", "#ff9e5e"]
+CHART_SURFACE = "rgba(0,0,0,0)"
+CHART_GRID = "#383438"
+PS5 = "PlayStation 5"
+XBOX = "Xbox Series X|S"
+PHASES = {
+    "Pre-orders": (32.5, None, 0.74, "Take-Two units · Sensor Tower platform mix"),
+    "Day 1": (None, 3.79, 0.74, "Take-Two retail sales · Sensor Tower platform mix"),
+    "Opening weekend": (44.9, 4.0, 33.7 / 44.9, "Alinea estimate · retail sales above $4B"),
+    "Week 1": (53.0, 4.7, 0.757, "Alinea estimate"),
+}
+PRICES = {"Standard": 79.99, "Ultimate": 99.99}
+ULTIMATE_SHARE = (97.0 - PRICES["Standard"]) / (PRICES["Ultimate"] - PRICES["Standard"])
 
-st.markdown(
-    """
-    <style>
-    /* Main layout & dark Vice City gradient accents */
-    .block-container {
-        padding-top: 1.2rem;
-        padding-bottom: 2rem;
-    }
+st.html(ASSETS / "dashboard.css")
 
-    /* Hero Banner */
-    .vice-hero {
-        background: linear-gradient(135deg, #140826 0%, #3b0d54 48%, #c92a76 85%, #ff7b54 100%);
-        border: 1px solid rgba(255, 110, 199, 0.45);
-        border-radius: 16px;
-        padding: 24px 30px;
-        margin-bottom: 22px;
-        box-shadow: 0 10px 30px rgba(201, 42, 118, 0.22);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 24px;
-        flex-wrap: wrap;
-    }
-    .vice-hero-text h1 {
-        color: #ffffff;
-        font-size: 2.05rem;
-        font-weight: 800;
-        margin: 0 0 6px 0;
-        letter-spacing: -0.5px;
-        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
-    }
-    .vice-hero-text p {
-        color: #f3d9fa;
-        font-size: 1.02rem;
-        margin: 0;
-        max-width: 720px;
-        line-height: 1.5;
-    }
-    .vice-badge {
-        display: inline-block;
-        background: rgba(0, 212, 255, 0.18);
-        border: 1px solid #00d4ff;
-        color: #7ce8ff;
-        font-size: 0.78rem;
-        font-weight: 700;
-        padding: 4px 12px;
-        border-radius: 999px;
-        margin-bottom: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-    }
 
-    /* Glassmorphic Metric Cards */
-    div[data-testid="stMetric"] {
-        background: linear-gradient(180deg, rgba(38, 16, 66, 0.65) 0%, rgba(20, 10, 38, 0.85) 100%);
-        border: 1px solid rgba(255, 110, 199, 0.35);
-        border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    div[data-testid="stMetric"]:hover {
-        border-color: #00d4ff;
-        transform: translateY(-2px);
-    }
-    div[data-testid="stMetricLabel"] {
-        color: #e0aaff !important;
-        font-weight: 600;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #ffffff !important;
-        font-weight: 800;
-    }
-
-    /* Styled Tabs */
-    button[data-baseweb="tab"] {
-        font-size: 0.98rem !important;
-        font-weight: 600 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ---------------------------------------------------------
-# 2. PUBLIC DATASET (Launch Week: Nov 19–26, 2026)
-# Sources: Alinea Analytics, Sony, Streams Charts
-# ---------------------------------------------------------
 @st.cache_data
 def load_public_data():
     regional_df = pd.DataFrame([
@@ -137,14 +73,6 @@ def load_public_data():
         {"Event": "Week 1 Cumulative", "Date": "2026-11-26", "YouTube_Views_M": 8900.0, "Stream_Hours_Watched_M": 424.05},
     ])
 
-    top_creators = pd.DataFrame([
-        {"Creator": "TheBurntPeanut", "Primary_Platform": "Multi-Platform", "Hours_Watched_M": 3.80, "Peak_Viewers_K": 2180},
-        {"Creator": "Alanzoka", "Primary_Platform": "Twitch", "Hours_Watched_M": 3.10, "Peak_Viewers_K": 410},
-        {"Creator": "IShowSpeed", "Primary_Platform": "YouTube", "Hours_Watched_M": 2.95, "Peak_Viewers_K": 2040},
-        {"Creator": "IlloJuan", "Primary_Platform": "Twitch", "Hours_Watched_M": 2.60, "Peak_Viewers_K": 520},
-        {"Creator": "LOUD Coringa", "Primary_Platform": "Twitch", "Hours_Watched_M": 2.15, "Peak_Viewers_K": 1770},
-    ])
-
     age_groups = pd.DataFrame([
         {"Age_Bracket": "Under 18 (Shared/Family)", "YouTube_Viewers_Pct": 16.0, "Est_Console_Players_Pct": 11.5},
         {"Age_Bracket": "18–24", "YouTube_Viewers_Pct": 37.5, "Est_Console_Players_Pct": 34.0},
@@ -153,67 +81,69 @@ def load_public_data():
         {"Age_Bracket": "45+", "YouTube_Viewers_Pct": 4.0, "Est_Console_Players_Pct": 4.5},
     ])
 
-    return regional_df, streaming_platforms, milestones, top_creators, age_groups
+    return regional_df, streaming_platforms, milestones, age_groups
 
 
-regional_df, streaming_platforms, milestones, top_creators, age_groups = load_public_data()
 
-# ---------------------------------------------------------
-# 3. SIDEBAR WITH OFFICIAL LOGO & FILTERS
-# ---------------------------------------------------------
+def plot(fig, height=350):
+    fig.update_layout(
+        template="plotly_dark",
+        height=height,
+        margin=dict(l=16, r=18, t=22, b=18),
+        paper_bgcolor=CHART_SURFACE,
+        plot_bgcolor=CHART_SURFACE,
+        font=dict(color="#f8f9fa"),
+        legend=dict(orientation="h", y=1.02, yanchor="bottom"),
+    )
+    fig.update_xaxes(gridcolor=CHART_GRID, zerolinecolor=CHART_GRID)
+    fig.update_yaxes(gridcolor=CHART_GRID, zerolinecolor=CHART_GRID)
+    st.plotly_chart(fig, width="stretch", theme=None, config={"displaylogo": False})
+
+
+def market_breakdown(regions, phase, platform, edition, metric):
+    units, revenue, ps5_mix, _ = PHASES[phase]
+    editions = {"Standard": 1 - ULTIMATE_SHARE, "Ultimate": ULTIMATE_SHARE}
+    console_mix = {PS5: ps5_mix, XBOX: 1 - ps5_mix}
+    # Infer global denominators from the approximately 30% opening-weekend rate.
+    installed_base = {PS5: 33.7 / 0.30, XBOX: 11.2 / 0.30}
+    selected_base = sum(installed_base.values()) if platform == "All consoles" else installed_base[platform]
+    frames = []
+    for console, column in [(PS5, "PS5_M"), (XBOX, "Xbox_M")]:
+        if platform != "All consoles" and platform != console:
+            continue
+        markets = regions[["Country", "Region", "ISO"]].copy()
+        weight = regions[column] / regions[column].sum() * console_mix[console]
+        for tier, share in editions.items():
+            if edition not in ("All editions", tier):
+                continue
+            segment = markets.assign(Console=console, Edition=tier)
+            if metric == "Units sold":
+                segment["Value"] = units * weight * share
+            elif metric == "Gross revenue":
+                revenue_share = share * PRICES[tier] / 97.0
+                segment["Value"] = revenue * weight * revenue_share
+            else:
+                segment["Value"] = 100 * units * weight * share / selected_base
+            frames.append(segment)
+    return pd.concat(frames, ignore_index=True)
+
+
+regional_df, streaming_platforms, milestones, age_groups = load_public_data()
+
 with st.sidebar:
-    st.image(GTA_VI_LOGO_URL, use_container_width=True)
-    st.caption("📍 State of Leonida • Launch Intelligence (Nov 2026)")
+    st.image(GTA_VI_LOGO_URL, width=160)
+    st.caption("State of Leonida (Nov 2026)")
     st.divider()
+    phase = st.radio("Sales window", list(PHASES), index=3)
+    platform = st.selectbox("Console Platform View", ["All consoles", PS5, XBOX])
+    regions = regional_df["Region"].unique().tolist()
+    selected_regions = st.multiselect("Filter Sales by Region", regions, default=regions)
 
-    selected_regions = st.multiselect(
-        "🌍 Filter Sales by Region",
-        options=regional_df["Region"].unique().tolist(),
-        default=regional_df["Region"].unique().tolist(),
-    )
-
-    platform_filter = st.radio(
-        "🎮 Console Platform View",
-        options=["All Consoles (53.0M)", "PlayStation 5 (75.7%)", "Xbox Series X|S (24.3%)"],
-        index=0,
-    )
-
-    st.divider()
-    st.subheader("🔴 Live YouTube API")
-
-    try:
-        default_key = st.secrets.get("YOUTUBE_API_KEY", "")
-    except Exception:
-        default_key = ""
-
-    yt_api_key = st.text_input(
-        "YouTube Data API v3 Key",
-        value=default_key,
-        type="password",
-        help="Loaded automatically from Streamlit Secrets if configured.",
-    )
-    yt_query = st.text_input("Live Search Query", value="GTA 6 gameplay")
-
-    st.divider()
-    st.image(LEONIDA_FLAG_URL, caption="State of Leonida (Wikimedia Commons)", use_container_width=True)
-
-# Filter regional dataframe
-filtered_reg = regional_df[regional_df["Region"].isin(selected_regions)].copy()
-if platform_filter == "PlayStation 5 (75.7%)":
-    filtered_reg["Active_Copies_M"] = filtered_reg["PS5_M"]
-elif platform_filter == "Xbox Series X|S (24.3%)":
-    filtered_reg["Active_Copies_M"] = filtered_reg["Xbox_M"]
-else:
-    filtered_reg["Active_Copies_M"] = filtered_reg["Copies_M"]
-
-# ---------------------------------------------------------
-# 4. HERO BANNER & TOP KPI METRICS
-# ---------------------------------------------------------
 st.markdown(
     f"""
     <div class="vice-hero">
         <div class="vice-hero-text">
-            <div class="vice-badge">🌴 Welcome to Leonida • Week-1 Global Telemetry</div>
+            <div class="vice-badge">Welcome to Leonida • Week-1 Global Telemetry</div>
             <h1>Grand Theft Auto VI — Launch & Viewership Analytics</h1>
             <p>
                 Interactive market intelligence tracking <strong>regional digital & physical downloads</strong>,
@@ -221,321 +151,446 @@ st.markdown(
                 and <strong>live YouTube & livestreaming viewership</strong>.
             </p>
         </div>
-        <div>
-            <img src="{GTA_VI_LOGO_URL}" width="155" alt="Grand Theft Auto VI Logo" style="filter: drop-shadow(0 6px 18px rgba(0,0,0,0.5));" />
-        </div>
+        <img class="vice-hero-logo" src="{GTA_VI_LOGO_URL}" alt="Grand Theft Auto VI Logo" />
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+units, revenue, _, phase_source = PHASES[phase]
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("💿 Week-1 Units Sold", "53.0M", "+44.9M Opening Weekend")
-k2.metric("💵 Gross Launch Revenue", "$4.70B", "$3.79B Day-1 Record")
-k3.metric("📡 Livestream Hours Watched", "424.1M hrs", "7.91M Peak Concurrent")
-k4.metric("▶️ YouTube Launch-Day Views", "3.50B", "55,000+ Live Channels")
+k1.metric("Worldwide units", f"{units:g}M" if units is not None else "Unavailable")
+k2.metric(
+    "Worldwide retail sales",
+    ("$4B+" if phase == "Opening weekend" else f"${revenue:g}B") if revenue is not None else "Unavailable",
+)
+k3.metric("Week 1 stream watch time", "420.17M hr")
+k4.metric("Launch stream peak", "7.91M")
+st.caption(f"{phase} sales · {phase_source} | [Streaming data]({STREAMS})")
 
-st.write("")
-
-# ---------------------------------------------------------
-# 5. DASHBOARD TABS
-# ---------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🌍 Downloads & Regions",
-    "📺 YouTube & Livestreams",
-    "👥 Age Group Demographics",
-    "⚡ Live YouTube Data Feed",
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Downloads & Regions", "YouTube & Livestreams", "Age Group Demographics", "Live YouTube Data Feed",
+    "Franchise & Sentiment",
 ])
 
-# --- TAB 1: REGIONAL DOWNLOADS & PLATFORM SPLIT ---
 with tab1:
-    col_map, col_bar = st.columns([1.35, 1])
+    metric_col, edition_col = st.columns(2)
+    available_metrics = {
+        "Units sold": units is not None,
+        "Gross revenue": revenue is not None,
+        "Console attach rate": units is not None,
+    }
+    metric = metric_col.selectbox("Metric", [name for name, available in available_metrics.items() if available])
+    edition_options = {"All editions": "All editions"}
+    edition_options.update({f"{name} · ${price:.2f}": name for name, price in PRICES.items()})
+    edition = edition_options[edition_col.selectbox("Edition", list(edition_options))]
+    label = {
+        "Units sold": "Units sold (M)",
+        "Gross revenue": "Retail sales (USD B)",
+        "Console attach rate": "Global attach contribution (pp)",
+    }[metric]
+    modeled = market_breakdown(regional_df, phase, platform, edition, metric)
+    markets = modeled[modeled["Region"].isin(selected_regions)]
 
-    with col_map:
-        st.subheader("Global Download & Sales Distribution (Millions)")
-        map_df = filtered_reg[filtered_reg["ISO"] != "ROW"]
-        fig_map = px.choropleth(
-            map_df,
-            locations="ISO",
-            color="Active_Copies_M",
-            hover_name="Country",
-            hover_data={"Share_Pct": True, "PS5_M": True, "Xbox_M": True, "ISO": False},
-            color_continuous_scale=["#2b0947", "#9d176c", "#ff2a85", "#ff9e5e"],
-            labels={"Active_Copies_M": "Copies (M)"},
+    if metric == "Console attach rate":
+        rate = modeled["Value"].sum()
+        st.metric(f"Estimated global attach rate · {platform}", f"{rate:.1f}%")
+        st.caption(
+            "Market values show percentage-point contributions to the global attach rate. "
+            "The global console bases are inferred from Alinea’s roughly 30% opening-weekend attach rate. "
+            "Country-level installed bases are unavailable."
         )
-        fig_map.update_layout(
-            margin=dict(l=0, r=0, t=10, b=0),
-            geo=dict(
-                showframe=False,
-                showcoastlines=True,
-                coastlinecolor="rgba(255,255,255,0.2)",
-                landcolor="rgba(30, 18, 52, 0.8)",
-                bgcolor="rgba(0,0,0,0)",
-            ),
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
-        )
-        st.plotly_chart(fig_map, use_container_width=True)
+    if markets.empty:
+        st.info("Select at least one region to see the market distribution.")
+    else:
+        countries = markets[markets["ISO"] != "ROW"]
+        split = "Edition" if platform != "All consoles" and edition == "All editions" else "Console"
+        if countries.empty:
+            st.info("Rest of World is available in the regional summary below.")
+        else:
+            map_col, bar_col = st.columns([1.18, 1])
+            country_totals = countries.groupby(["ISO", "Country"], as_index=False)["Value"].sum()
+            with map_col:
+                st.subheader("Global Download & Sales Distribution")
+                fig = px.choropleth(
+                    country_totals, locations="ISO", color="Value", hover_name="Country",
+                    labels={"Value": label}, color_continuous_scale=SCALE, projection="natural earth",
+                )
+                fig.update_geos(
+                    showframe=False, showcoastlines=True, coastlinecolor="#4a414d",
+                    showland=True, landcolor="#241832", bgcolor=CHART_SURFACE,
+                )
+                plot(fig, 395)
+            with bar_col:
+                st.subheader("Top Markets by " + ("Edition" if split == "Edition" else "Console Split"))
+                bars = countries.groupby(["Country", split], as_index=False)["Value"].sum()
+                ranking = country_totals.sort_values("Value")["Country"].tolist()
+                plot(px.bar(
+                    bars, x="Value", y="Country", color=split, orientation="h", barmode="stack",
+                    category_orders={"Country": ranking, split: list(PRICES) if split == "Edition" else [PS5, XBOX]},
+                    labels={"Value": label, "Country": ""}, color_discrete_sequence=COLORS,
+                    color_discrete_map={PS5: "#0096ff", XBOX: "#2ec4b6"},
+                ), 395)
 
-    with col_bar:
-        st.subheader("Top Markets by Console Split")
-        top_countries = filtered_reg[filtered_reg["ISO"] != "ROW"].sort_values("Copies_M", ascending=True)
-        fig_stack = go.Figure()
-        fig_stack.add_trace(go.Bar(
-            y=top_countries["Country"],
-            x=top_countries["PS5_M"],
-            name="PS5 (75.7%)",
-            orientation="h",
-            marker_color="#0096FF",
-        ))
-        fig_stack.add_trace(go.Bar(
-            y=top_countries["Country"],
-            x=top_countries["Xbox_M"],
-            name="Xbox Series X|S (24.3%)",
-            orientation="h",
-            marker_color="#2EC4B6",
-        ))
-        fig_stack.update_layout(
-            barmode="stack",
-            xaxis_title="Copies Sold (Millions)",
-            margin=dict(l=0, r=10, t=10, b=0),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
-        )
-        st.plotly_chart(fig_stack, use_container_width=True)
+        by_region = markets.groupby("Region", as_index=False)["Value"].sum()
+        share_col, table_col = st.columns([1, 1.25])
+        with share_col:
+            st.subheader("Regional share")
+            plot(px.pie(
+                by_region, names="Region", values="Value", hole=0.68,
+                color_discrete_sequence=COLORS,
+            ), 300)
+        with table_col:
+            st.subheader("Market breakdown")
+            table = markets.pivot_table(
+                index=["Region", "Country"], columns="Edition", values="Value",
+                aggfunc="sum", observed=True,
+            ).reset_index()
+            visible_editions = [tier for tier in PRICES if tier in table]
+            table["Total"] = table[visible_editions].sum(axis=1)
+            st.dataframe(
+                table[["Country", "Region", *visible_editions, "Total"]]
+                .sort_values("Total", ascending=False),
+                hide_index=True, height=300,
+                column_config={col: st.column_config.NumberColumn(format="%.2f")
+                               for col in [*visible_editions, "Total"]},
+            )
+            st.caption(label)
+
+    st.caption(
+        "Regional and edition values are modeled. Each phase uses the dashboard’s existing geographic weights "
+        "by console. The edition scenario assumes a $97 average order at US list prices, implying an 85% "
+        "Ultimate unit share across all windows. Revenue splits allocate the published phase total by price-weighted "
+        "share. The opening-weekend revenue model uses $4B as a floor."
+    )
+    st.caption(
+        f"Sales sources · [Take-Two]({TAKE_TWO}) · [Sensor Tower]({SENSOR_TOWER}) · "
+        f"[Alinea opening weekend]({WEEKEND}) · [Alinea week one]({WEEK_ONE})"
+    )
 
     st.divider()
-    c_reg_pie, c_reg_table = st.columns([1, 1.4])
-    with c_reg_pie:
-        st.subheader("Share by Macro-Region")
-        region_summary = filtered_reg.groupby("Region", as_index=False)["Active_Copies_M"].sum()
-        fig_reg_pie = px.pie(
-            region_summary,
-            values="Active_Copies_M",
-            names="Region",
-            hole=0.5,
-            color_discrete_sequence=["#ff2a85", "#00d4ff", "#ff9e5e", "#9b5de5", "#00f5d4"],
-        )
-        fig_reg_pie.update_traces(textposition="inside", textinfo="percent+label")
-        fig_reg_pie.update_layout(
-            margin=dict(l=0, r=0, t=10, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
-            showlegend=False,
-        )
-        st.plotly_chart(fig_reg_pie, use_container_width=True)
-
-    with c_reg_table:
-        st.subheader("Regional Sales & Platform Breakdown")
-        st.dataframe(filtered_reg, use_container_width=True, hide_index=True)
-
-# --- TAB 2: YOUTUBE & LIVESTREAMS ---
-with tab2:
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Week-1 Livestream Hours Watched by Platform")
-        fig_donut = px.pie(
-            streaming_platforms,
-            values="Hours_Watched_M",
-            names="Platform",
-            hole=0.55,
-            color="Platform",
-            color_discrete_map={
-                "Twitch": "#9146FF",
-                "YouTube Live": "#FF0033",
-                "Kick": "#53FC18",
-            },
-        )
-        fig_donut.update_traces(textposition="inside", textinfo="percent+label")
-        fig_donut.update_layout(
-            margin=dict(l=0, r=0, t=20, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
-        )
-        st.plotly_chart(fig_donut, use_container_width=True)
-
-    with c2:
-        st.subheader("Top Week-1 Creators (Hours Watched in Millions)")
-        fig_creators = px.bar(
-            top_creators.sort_values("Hours_Watched_M", ascending=True),
-            x="Hours_Watched_M",
-            y="Creator",
-            color="Primary_Platform",
-            orientation="h",
-            text="Hours_Watched_M",
-            color_discrete_map={
-                "Multi-Platform": "#00d4ff",
-                "Twitch": "#9146FF",
-                "YouTube": "#FF0033",
-            },
-            labels={"Hours_Watched_M": "Hours Watched (M)"},
-        )
-        fig_creators.update_traces(texttemplate="%{text:.2f}M", textposition="outside")
-        fig_creators.update_layout(
-            margin=dict(l=0, r=35, t=20, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
-        )
-        st.plotly_chart(fig_creators, use_container_width=True)
-
-    st.subheader("Hype-to-Launch Momentum: Stream Hours Watched Across Milestones")
-    fig_line = px.area(
-        milestones,
-        x="Event",
-        y="Stream_Hours_Watched_M",
-        markers=True,
-        text="Stream_Hours_Watched_M",
-        labels={"Stream_Hours_Watched_M": "Stream Hours Watched (Millions)"},
-    )
-    fig_line.update_traces(
-        line_color="#ff2a85",
-        fillcolor="rgba(255, 42, 133, 0.22)",
-        textposition="top center",
-    )
-    fig_line.update_layout(
-        margin=dict(l=0, r=0, t=20, b=0),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#f8f9fa"),
-    )
-    st.plotly_chart(fig_line, use_container_width=True)
-
-# --- TAB 3: AGE GROUP DEMOGRAPHICS ---
-with tab3:
-    st.subheader("Estimated Age Distribution: Players vs. Video/Stream Viewers")
-    st.info(
-        "**Data Methodology Note:** Sony PSN and Xbox do not publish raw buyer age logs due to privacy laws "
-        "and shared family accounts. This model estimates age brackets by combining **YouTube Gaming audience demographics** "
-        "with **console survey proxies** for ESRB Mature (18+) launches."
-    )
-
-    col_age_chart, col_age_insights = st.columns([1.6, 1])
-
-    with col_age_chart:
-        age_melted = age_groups.melt(
-            id_vars="Age_Bracket",
-            value_vars=["Est_Console_Players_Pct", "YouTube_Viewers_Pct"],
-            var_name="Metric",
-            value_name="Percentage",
-        )
-        age_melted["Metric"] = age_melted["Metric"].replace({
-            "Est_Console_Players_Pct": "Est. Console Players (%)",
-            "YouTube_Viewers_Pct": "YouTube / Stream Viewers (%)",
+    momentum_col, traffic_col = st.columns(2)
+    with momentum_col:
+        st.subheader("Pre-order momentum")
+        momentum = pd.DataFrame({
+            "Date": pd.to_datetime(["2026-10-13", "2026-11-03", "2026-11-10", "2026-11-13", "2026-11-16"]),
+            "Units (M)": [6.08, 7.71, 9.69, 12.13, 14.94],
         })
-
-        fig_age = px.bar(
-            age_melted,
-            x="Age_Bracket",
-            y="Percentage",
-            color="Metric",
-            barmode="group",
-            text="Percentage",
-            color_discrete_sequence=["#ff2a85", "#00d4ff"],
+        fig = px.line(momentum, x="Date", y="Units (M)", markers=True, color_discrete_sequence=COLORS)
+        fig.add_annotation(x=pd.Timestamp("2026-11-10"), y=9.69, text="Pre-load opens", ax=-35, ay=-42)
+        fig.add_scatter(
+            x=[pd.Timestamp("2026-11-19")], y=[32.5], mode="markers",
+            name="Take-Two pre-release total", marker=dict(color=COLORS[1], size=12, symbol="diamond"),
+            hovertemplate="%{y:.1f}M pre-release units<extra></extra>",
         )
-        fig_age.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig_age.update_layout(
-            yaxis_title="Share of Audience (%)",
-            xaxis_title="Age Group",
-            margin=dict(l=0, r=0, t=20, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#f8f9fa"),
+        fig.data[0].update(name="Sensor Tower digital estimate", showlegend=True)
+        plot(fig)
+        st.caption(f"[Sensor Tower digital estimates]({SENSOR_TOWER}) · [Take-Two pre-release total]({TAKE_TWO})")
+    with traffic_col:
+        st.subheader("UK broadband traffic during pre-load")
+        traffic = pd.DataFrame({
+            "Window": ["Average Tuesday", "Nov 10 pre-load"],
+            "Downstream (PB)": [284.46, 377.98],
+        })
+        fig = px.bar(
+            traffic, x="Window", y="Downstream (PB)", text_auto=".1f",
+            color="Window", color_discrete_sequence=[COLORS[1], COLORS[0]],
         )
-        st.plotly_chart(fig_age, use_container_width=True)
-
-    with col_age_insights:
-        st.markdown("#### 🔍 Key Demographic Takeaways")
-        st.markdown(
-            """
-            * **Core Buyer Bracket (25–34):** Accounts for **36.5%** of estimated console buyers—players who grew up with *GTA V* (2013) and now have high console ownership and purchasing power.
-            * **Core Viewer Bracket (18–24):** Leads video and livestream consumption at **37.5%**, driving viral clips on YouTube, Twitch, and Kick.
-            * **Under-18 Shadow Audience:** Despite the **18+ / M rating**, roughly **16%** of YouTube viewership and **11.5%** of playtime comes from younger audiences watching streams or playing via shared family consoles.
-            """
+        fig.update_layout(showlegend=False)
+        plot(fig)
+        st.caption(
+            "Openreach reported 32.9% more downstream traffic. Virgin Media O2 also reported record traffic. "
+            "Pre-load storage requirements reached 212 GB on some devices. "
+            "[Openreach figures reported by ISPreview](https://www.ispreview.co.uk/index.php/2026/11/"
+            "openreach-details-uk-broadband-traffic-impact-from-gta-6-pre-loading.html)"
         )
 
-# --- TAB 4: LIVE YOUTUBE DATA API ---
+with tab2:
+    watch_col, rival_col = st.columns(2)
+    with watch_col:
+        st.subheader("Watch time by platform")
+        plot(px.pie(
+            streaming_platforms, names="Platform", values="Hours_Watched_M", hole=0.68,
+            color_discrete_sequence=COLORS,
+        ))
+        st.caption("Platform split from the dashboard’s existing dataset.")
+    with rival_col:
+        st.subheader("Rival games’ daily active users")
+        rivals = pd.DataFrame({
+            "Game": ["Call of Duty HQ", "Fortnite", "EA FC 27"],
+            "Before launch": [7.5, 17.8, 5.9],
+            "At launch": [4.4, 12.8, 4.3],
+            "Change": ["−42%", "−28%", "−27%"],
+        }).melt(id_vars=["Game", "Change"], var_name="Window", value_name="Daily players (M)")
+        plot(px.bar(
+            rivals, x="Game", y="Daily players (M)", color="Window", barmode="group",
+            text="Daily players (M)", hover_data=["Change"], color_discrete_sequence=[COLORS[1], COLORS[0]],
+        ))
+        st.caption(f"Estimated change at launch: Call of Duty HQ −42%, Fortnite −28%, EA FC 27 −27%. [Alinea]({WEEKEND})")
+
+    st.subheader("Creator watch time vs. peak audience")
+    creators = pd.DataFrame([
+        ("Windah Basudara", 3.592470, 170329, 108317),
+        ("IShowSpeed", 2.694169, 416690, 128295),
+        ("MixiGaming", 1.937039, 84818, 35872),
+        ("TheBurntPeanut", 1.628195, 107933, 80076),
+        ("LOUD Coringa", 1.361111, 175011, 83761),
+    ], columns=["Creator", "Hours watched (M)", "Peak concurrent viewers", "Average viewers"])
+    plot(px.scatter(
+        creators, x="Hours watched (M)", y="Peak concurrent viewers", size="Average viewers",
+        size_max=43, color="Creator", hover_name="Creator", color_discrete_sequence=COLORS,
+    ), 395)
+    st.caption(
+        "Bubble area represents average viewers. This YouTube Gaming snapshot uses one platform and reporting "
+        "window for all three measures. "
+        "[Streams Charts, seven-day snapshot accessed Nov 27](https://streamscharts.com/channels?game=grand-theft-auto-vi&platform=youtube-gaming)"
+    )
+    st.subheader("Watch time at launch milestones")
+    plot(px.line(
+        milestones, x="Event", y="Stream_Hours_Watched_M", markers=True,
+        labels={"Event": "", "Stream_Hours_Watched_M": "Hours watched (M)"},
+        color_discrete_sequence=COLORS,
+    ))
+    st.caption("Milestone totals from the dashboard’s existing dataset cover different reporting windows.")
+
+with tab3:
+    st.subheader("Estimated audience by age")
+    age = age_groups.rename(columns={
+        "Age_Bracket": "Age group", "Est_Console_Players_Pct": "Console players",
+        "YouTube_Viewers_Pct": "YouTube viewers",
+    }).melt(id_vars="Age group", var_name="Audience", value_name="Share (%)")
+    plot(px.bar(
+        age, x="Age group", y="Share (%)", color="Audience", barmode="group",
+        color_discrete_sequence=COLORS, text_auto=".1f",
+    ), 390)
+    st.caption("Illustrative audience estimates from the dashboard’s existing dataset.")
+
+
+def youtube_results(key, query, order, region, duration):
+    base_url = "https://www.googleapis.com/youtube/v3/"
+    search = requests.get(base_url + "search", params={
+        "part": "snippet", "q": query, "type": "video", "order": order,
+        "regionCode": region, "videoDuration": duration, "maxResults": 10, "key": key,
+    }, timeout=10)
+    search.raise_for_status()
+    ids = [item["id"]["videoId"] for item in search.json().get("items", [])]
+    if not ids:
+        return pd.DataFrame()
+    details = requests.get(base_url + "videos", params={
+        "part": "snippet,statistics", "id": ",".join(ids), "key": key,
+    }, timeout=10)
+    details.raise_for_status()
+    videos = {item["id"]: item for item in details.json().get("items", [])}
+    rows = []
+    for video_id in ids:
+        if video_id not in videos:
+            continue
+        snippet = videos[video_id]["snippet"]
+        statistics = videos[video_id].get("statistics", {})
+        rows.append({
+            "Thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url"),
+            "Title": snippet["title"],
+            "Channel": snippet["channelTitle"],
+            "Published": snippet.get("publishedAt", "")[:10],
+            "Views": int(statistics["viewCount"]) if "viewCount" in statistics else None,
+            "Likes": int(statistics["likeCount"]) if "likeCount" in statistics else None,
+            "Watch": f"https://www.youtube.com/watch?v={video_id}",
+        })
+    return pd.DataFrame(rows)
+
+
 with tab4:
-    st.subheader("Live YouTube Video & Viewership Tracker")
-    if not yt_api_key:
-        st.warning(
-            "Enter a **YouTube Data API v3 Key** in the left sidebar to pull real-time video statistics, "
-            "thumbnails, views, and engagement metrics directly from YouTube."
-        )
-    else:
+    st.subheader("Search YouTube")
+    try:
+        configured_key = st.secrets.get("YOUTUBE_API_KEY", "")
+    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+        configured_key = ""
+
+    durations = {"Any": "any", "Short (<4 min)": "short", "Long (>20 min)": "long"}
+    orders = {"Views": "viewCount", "Newest": "date", "Relevance": "relevance"}
+    entered_key = ""
+    with st.form("youtube_search"):
+        query = st.text_input("Search query", "GTA 6 gameplay")
+        sort_col, region_col, duration_col = st.columns(3)
+        order = sort_col.selectbox("Sort by", list(orders))
+        region = region_col.selectbox("Region", ["US", "GB", "BR", "DE", "JP"])
+        duration = duration_col.selectbox("Duration", list(durations))
+        if not configured_key:
+            entered_key = st.text_input("YouTube Data API v3 key", type="password")
+        run_search = st.form_submit_button("Search videos", type="primary")
+
+    if run_search:
+        st.session_state.pop("youtube_search_result", None)
+        key = configured_key or entered_key.strip()
+        if not key or not query.strip():
+            st.warning("Enter a search query and a YouTube Data API key.")
+        else:
+            with st.spinner("Searching YouTube…"):
+                try:
+                    results = youtube_results(key, query.strip(), orders[order], region, durations[duration])
+                    st.session_state["youtube_search_result"] = (query.strip(), order, region, duration, results)
+                except requests.HTTPError as exc:
+                    st.error(
+                        f"YouTube returned HTTP {exc.response.status_code}. Check the key, API access and quota."
+                    )
+                except (requests.RequestException, ValueError, KeyError):
+                    st.error("YouTube results could not be loaded. Try again.")
+    saved_search = st.session_state.get("youtube_search_result")
+    if saved_search is not None:
+        saved_query, saved_order, saved_region, saved_duration, results = saved_search
+        st.caption(f"{saved_query} · {saved_order} · {saved_region} · {saved_duration}")
+        if results.empty:
+            st.info("No videos matched this search.")
+        else:
+            st.dataframe(
+                results, hide_index=True,
+                column_config={
+                    "Thumbnail": st.column_config.ImageColumn("Preview"),
+                    "Watch": st.column_config.LinkColumn("Video", display_text="Watch"),
+                },
+            )
+            chart_data = results.dropna(subset=["Views"]).head(8)
+            if not chart_data.empty:
+                chart_data = chart_data.assign(Result=range(1, len(chart_data) + 1))
+                fig = px.bar(
+                    chart_data, x="Views", y="Result", orientation="h",
+                    hover_data=["Title", "Channel", "Likes"], color_discrete_sequence=COLORS,
+                    labels={"Result": "Search rank"},
+                )
+                fig.update_yaxes(autorange="reversed", dtick=1)
+                plot(fig)
+
+
+def read_reviews(file_bytes):
+    stream = BytesIO(file_bytes)
+    if not file_bytes.startswith(b"PK"):
+        return pd.read_csv(stream, sep=None, engine="python")
+
+    with ZipFile(stream) as archive:
+        entries = [
+            entry for entry in archive.infolist()
+            if entry.filename.lower().endswith(".csv") and not entry.filename.startswith("__MACOSX/")
+        ]
+        if not entries or sum(entry.file_size for entry in entries) > 40 * 1024 * 1024:
+            raise ValueError("Upload one or more CSV files totaling at most 40 MB.")
+        frames = []
+        for entry in entries:
+            with archive.open(entry) as file:
+                frame = pd.read_csv(file)
+                frame["Source file"] = entry.filename
+                frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
+def prepare_reviews(frame, platform_column, score_column, review_column):
+    platforms = frame[platform_column].astype("string").str.lower()
+    scores = pd.to_numeric(frame[score_column], errors="coerce")
+    reviews = pd.DataFrame({
+        "Console": platforms.map(lambda name: (
+            PS5 if re.search(r"ps\s*5|playstation\s*5", str(name)) else
+            XBOX if "xbox" in str(name) or "xsx" in str(name) else None
+        )),
+        "Score": scores,
+        "Review": frame[review_column].fillna("").astype(str),
+    })
+    return reviews[reviews["Console"].notna() & reviews["Score"].between(0, 10)]
+
+
+def review_keywords(text):
+    stopwords = set(
+        "about after again also because been before being both could even from game games good great have here "
+        "into it's just like more much only other over really some than that their them then there these they "
+        "this those through very want were what when where which while will with would your gta rockstar review".split()
+    )
+    counts = Counter()
+    for review in text:
+        counts.update({word for word in re.findall(r"[^\W\d_]{3,}", review.lower()) if word not in stopwords})
+    return pd.DataFrame(counts.most_common(15), columns=["Keyword", "Reviews mentioning keyword"])
+
+
+with tab5:
+    st.subheader("Franchise launch benchmark")
+    benchmark = pd.DataFrame([
+        ("Day 1 retail sales", "GTA V (2013)", 0.8, 0.0, "$800M+"),
+        ("Day 1 retail sales", "GTA VI (2026)", 3.79, 0.0, "$3.79B"),
+        ("Day 3 retail sales", "GTA V (2013)", 1.0, 0.0, "$1B+"),
+        ("Day 4 retail sales", "GTA VI (2026)", 4.0, 0.0, "$4B+"),
+        ("Estimated budget", "GTA V (2013)", 0.265, 0.0, "~$265M"),
+        ("Estimated budget", "GTA VI (2026)", 1.0, 0.5, "$1B–$1.5B"),
+    ], columns=["Metric", "Title", "USD (B)", "Range above", "Reported value"])
+    benchmark["Range below"] = 0
+    fig = px.bar(
+        benchmark, x="Metric", y="USD (B)", color="Title", barmode="group",
+        text="Reported value", error_y="Range above", error_y_minus="Range below",
+        color_discrete_sequence=[COLORS[1], COLORS[0]],
+        hover_data={"Range above": False, "Range below": False},
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_yaxes(range=[0, 4.65])
+    plot(fig, 410)
+    st.caption(
+        "Retail sales and estimated budgets have different accounting bases. "
+        f"[Take-Two GTA V](https://ir.take2games.com/static-files/89147540-5f6a-4c86-bdd6-caeae6ea799a) · "
+        f"[Take-Two GTA VI]({TAKE_TWO}) · [Alinea four-day estimate]({WEEKEND})"
+    )
+
+    st.divider()
+    st.subheader("Player sentiment")
+    st.caption(f"Import launch-period Metacritic user reviews from [GTA VI User Reviews on Kaggle]({KAGGLE}).")
+    upload = st.file_uploader("Reviews CSV or Kaggle ZIP", type=["csv", "zip"])
+    if upload is not None:
         try:
-            search_url = "https://www.googleapis.com/youtube/v3/search"
-            search_params = {
-                "part": "snippet",
-                "q": yt_query,
-                "type": "video",
-                "order": "viewCount",
-                "maxResults": 10,
-                "key": yt_api_key,
-            }
-            search_res = requests.get(search_url, params=search_params, timeout=10).json()
-
-            if "error" in search_res:
-                st.error(f"YouTube API Error: {search_res['error']['message']}")
+            if upload.size > 40 * 1024 * 1024:
+                raise ValueError("Upload a file up to 40 MB.")
+            raw_reviews = read_reviews(upload.getvalue())
+        except (ValueError, BadZipFile, RuntimeError) as exc:
+            st.error(f"Could not import the review file. {exc}")
+        else:
+            columns = raw_reviews.columns.tolist()
+            normalized = {re.sub(r"[^a-z0-9]", "", col.lower()): col for col in columns}
+            mapping = st.columns(3)
+            chosen = []
+            for col, name, aliases in zip(mapping, ["Platform", "User score (0–10)", "Review text"], [
+                ["platform", "console", "system", "platformname", "sourcefile"],
+                ["userscore", "score", "rating", "reviewscore", "userrating"],
+                ["reviewtext", "review", "text", "comment", "reviewbody", "content", "body", "description"],
+            ]):
+                default = next((normalized[alias] for alias in aliases if alias in normalized), None)
+                chosen.append(col.selectbox(name, columns, index=columns.index(default) if default else None))
+            if all(chosen) and len(set(chosen)) == 3:
+                reviews = prepare_reviews(raw_reviews, *chosen)
+                if reviews.empty:
+                    st.warning("No PS5 or Xbox reviews with a score between 0 and 10 were found.")
+                else:
+                    consoles = st.multiselect(
+                        "Review platforms", [PS5, XBOX], default=[PS5, XBOX],
+                    )
+                    reviews = reviews[reviews["Console"].isin(consoles)]
+                    if reviews.empty:
+                        st.info("Select a platform with reviews in this file.")
+                    else:
+                        score_col, keyword_col = st.columns(2)
+                        with score_col:
+                            st.markdown("**User score distribution**")
+                            fig = px.histogram(
+                                reviews, x="Score", color="Console", barmode="overlay",
+                                histnorm="percent", opacity=0.65, color_discrete_sequence=COLORS,
+                            )
+                            fig.update_traces(xbins=dict(start=-0.5, end=10.5, size=1))
+                            fig.update_xaxes(range=[-0.5, 10.5], dtick=1)
+                            fig.update_yaxes(title="Share of platform reviews (%)")
+                            plot(fig, 370)
+                            counts = reviews["Console"].value_counts()
+                            st.caption(" · ".join(f"{console}: {count:,} reviews" for console, count in counts.items()))
+                        with keyword_col:
+                            st.markdown("**Most mentioned review keywords**")
+                            keywords = review_keywords(reviews["Review"])
+                            if keywords.empty:
+                                st.info("The selected reviews contain no usable keywords.")
+                            else:
+                                plot(px.bar(
+                                    keywords.iloc[::-1], x="Reviews mentioning keyword", y="Keyword",
+                                    orientation="h", color_discrete_sequence=COLORS,
+                                ), 370)
             else:
-                video_ids = [item["id"]["videoId"] for item in search_res.get("items", [])]
-                stats_url = "https://www.googleapis.com/youtube/v3/videos"
-                stats_params = {
-                    "part": "snippet,statistics",
-                    "id": ",".join(video_ids),
-                    "key": yt_api_key,
-                }
-                stats_res = requests.get(stats_url, params=stats_params, timeout=10).json()
-
-                rows = []
-                for v in stats_res.get("items", []):
-                    stats = v.get("statistics", {})
-                    snippet = v.get("snippet", {})
-                    vid_id = v.get("id")
-                    thumb = snippet.get("thumbnails", {}).get("medium", {}).get("url", "")
-                    rows.append({
-                        "Thumbnail": thumb,
-                        "Title": snippet.get("title"),
-                        "Channel": snippet.get("channelTitle"),
-                        "Published": snippet.get("publishedAt", "")[:10],
-                        "Views": int(stats.get("viewCount", 0)),
-                        "Likes": int(stats.get("likeCount", 0)),
-                        "Watch": f"https://www.youtube.com/watch?v={vid_id}",
-                    })
-
-                live_df = pd.DataFrame(rows).sort_values("Views", ascending=False)
-                st.success(f"Fetched {len(live_df)} live videos for query: **{yt_query}**")
-
-                st.dataframe(
-                    live_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Thumbnail": st.column_config.ImageColumn("Preview", width="small"),
-                        "Views": st.column_config.NumberColumn("Views", format="%d"),
-                        "Likes": st.column_config.NumberColumn("Likes", format="%d"),
-                        "Watch": st.column_config.LinkColumn("YouTube Link", display_text="Watch ▶"),
-                    },
-                )
-
-                fig_live = px.bar(
-                    live_df.head(8).sort_values("Views", ascending=True),
-                    x="Views",
-                    y="Channel",
-                    orientation="h",
-                    hover_data=["Title", "Likes"],
-                    color="Views",
-                    color_continuous_scale=["#9d176c", "#ff2a85", "#00d4ff"],
-                    title=f"Top Channels by Live View Count ('{yt_query}')",
-                )
-                fig_live.update_layout(
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#f8f9fa"),
-                )
-                st.plotly_chart(fig_live, use_container_width=True)
-        except Exception as e:
-            st.error(f"Failed to fetch YouTube data: {e}")
+                st.info("Choose distinct columns for the platform, score and review text.")
