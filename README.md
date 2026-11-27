@@ -1,1 +1,2 @@
-# gtavi-analytics
+# GTA VI Launch & Viewership Analytics Dashboard
+Interactive Streamlit dashboard visualizing GTA VI regional sales, console splits, age-group proxy demographics, and YouTube/Twitch livestreaming metrics.
